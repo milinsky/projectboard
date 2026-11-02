@@ -21,6 +21,7 @@ from urllib.parse import quote
 class OpenResult:
     ok: bool
     error_message: str | None
+    error_code: str | None = None
 
 
 def zcode_app_exists() -> bool:
@@ -32,9 +33,11 @@ def open_in_zcode(project_path: str) -> OpenResult:
     if not p.is_absolute():
         # Security: относительный путь (и argv-инъекция вида "-a ...") — отказ
         # до запуска open; резолвить относительно cwd недоверенной строке нельзя.
-        return OpenResult(False, f"ожидается абсолютный путь: {project_path}")
+        return OpenResult(False, f"ожидается абсолютный путь: {project_path}",
+                          error_code="not_absolute")
     if not p.is_dir():
-        return OpenResult(False, f"каталог не найден: {project_path}")
+        return OpenResult(False, f"каталог не найден: {project_path}",
+                          error_code="dir_not_found")
     # encodeURIComponent-эквивалент: кодируем всё, включая "/" (проверено:
     # zcode://workspace/open?path=%2FUsers%2F... открывает проект)
     url = f"zcode://workspace/open?path={quote(project_path, safe='')}"
@@ -42,10 +45,10 @@ def open_in_zcode(project_path: str) -> OpenResult:
         proc = subprocess.run(["open", url],
                               capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
-        return OpenResult(False, "превышено время ожидания (10 с)")
+        return OpenResult(False, "превышено время ожидания (10 с)", error_code="timeout")
     except FileNotFoundError:
-        return OpenResult(False, "утилита open не найдена")
+        return OpenResult(False, "утилита open не найдена", error_code="open_missing")
     if proc.returncode != 0:
         msg = (proc.stderr or proc.stdout or f"open вернул код {proc.returncode}").strip()
-        return OpenResult(False, msg)
+        return OpenResult(False, msg, error_code="open_failed")
     return OpenResult(True, None)

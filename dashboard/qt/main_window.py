@@ -17,7 +17,7 @@ project_model, detail_panel, zcode_opener) — логики скана/хран�
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, QRect, Qt, QThread
-from PySide6.QtGui import QAction, QCloseEvent, QCursor, QMouseEvent, QPainter, QPalette
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QCursor, QMouseEvent, QPainter, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -43,12 +43,12 @@ from PySide6.QtWidgets import (
 from dashboard import config, storage
 from dashboard.models import ProjectEntry, ScanResult
 from dashboard.qt.detail_panel import DetailPanel, NO_ZCODE_TIP
-from dashboard.qt.project_model import ProjectFilterProxy, ProjectTableModel, plural_ru
+from dashboard.qt.project_model import ProjectFilterProxy, ProjectTableModel, tr_count
 from dashboard.qt.scan_worker import ScanWorker
 from dashboard.scanner import DEFAULT_IGNORE_NAMES, ScanOptions
 from dashboard.zcode_opener import open_in_zcode, zcode_app_exists
 
-_COLUMN_GROUP = 1  # колонка «Группа» (project_model.COLUMNS); сортировка по умолчанию
+_COLUMN_GROUP = 1  # колонка «Группа» (headerData section 1); сортировка по умолчанию
 
 
 def _format_seconds(duration_ms: int) -> str:
@@ -176,6 +176,7 @@ class MainWindow(QMainWindow):
         self._panel.open_requested.connect(self._open_in_zcode)
 
         self._build_toolbar()
+        self._build_language_menu()
         self._build_central()
         self._build_statusbar()
         self._load_cached_index()
@@ -183,33 +184,33 @@ class MainWindow(QMainWindow):
     # ---------- композиция ----------
 
     def _build_toolbar(self) -> None:
-        toolbar = QToolBar("Главная", self)
+        toolbar = QToolBar(self.tr("Главная"), self)
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         self.addToolBar(toolbar)
 
-        self._index_action = QAction("Индексировать", self)
+        self._index_action = QAction(self.tr("Индексировать"), self)
         self._index_action.triggered.connect(self._on_index_clicked)
         toolbar.addAction(self._index_action)
 
         self._root_edit = QLineEdit(self._cfg.root, self)
         self._root_edit.setReadOnly(True)
         self._root_edit.setMinimumWidth(260)
-        self._root_edit.setToolTip("Корень сканирования")
+        self._root_edit.setToolTip(self.tr("Корень сканирования"))
         toolbar.addWidget(self._root_edit)
 
-        browse_button = QPushButton("Обзор…", self)
+        browse_button = QPushButton(self.tr("Обзор…"), self)
         browse_button.clicked.connect(self._on_browse_clicked)
         toolbar.addWidget(browse_button)
 
         self._search_edit = QLineEdit(self)
-        self._search_edit.setPlaceholderText("Поиск по имени и пути…")
+        self._search_edit.setPlaceholderText(self.tr("Поиск по имени и пути…"))
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setMinimumWidth(220)
         self._search_edit.textChanged.connect(self._proxy.setFilterFixedString)
         toolbar.addWidget(self._search_edit)
 
-        readme_check = QCheckBox("Искать в README", self)
+        readme_check = QCheckBox(self.tr("Искать в README"), self)
         readme_check.toggled.connect(self._proxy.set_search_in_readme)
         toolbar.addWidget(readme_check)
 
@@ -266,10 +267,53 @@ class MainWindow(QMainWindow):
         self._errors_button = QPushButton(self)
         self._errors_button.setFlat(True)
         self._errors_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._errors_button.setToolTip("Показать список ошибок скана")
+        self._errors_button.setToolTip(self.tr("Показать список ошибок скана"))
         self._errors_button.clicked.connect(self._show_errors_dialog)
         self._errors_button.setVisible(False)
         self.statusBar().addPermanentWidget(self._errors_button)
+
+    # ---------- меню «Язык»: первый menu bar приложения ----------
+
+    def _build_language_menu(self) -> None:
+        # Стандартные пункты app-menu (About/Hide/Quit) создаёт платформа —
+        # своих QAction с AboutRole/QuitRole не добавляем (архитектура п. 4.7).
+        menu = self.menuBar().addMenu(self.tr("Язык"))
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        # «Системный» переводится как обычная строка; самоназвания языков —
+        # литералы БЕЗ tr (бриф §9: Русский / English / 简体中文 выглядят
+        # одинаково на любом языке; «Русский» — в allowlist гейта кириллицы).
+        for value, label in (
+            ("system", self.tr("Системный")),
+            ("ru", "Русский"),
+            ("en", "English"),
+            ("zh_CN", "简体中文"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setData(value)
+            group.addAction(action)
+            menu.addAction(action)
+            # value — аргументом по умолчанию: без него lambda из цикла
+            # захватывает последний пункт (подводный камень задачи).
+            action.triggered.connect(
+                lambda checked=False, v=value: self._set_language(v)
+            )
+            if value == self._cfg.language:
+                action.setChecked(True)
+
+    def _set_language(self, value: str) -> None:
+        # Запись конфига ТОЛЬКО здесь, по действию пользователя (инвариант
+        # gui.md №5: при старте — только чтение); неизменённое значение —
+        # ни записи, ни диалога.
+        if value == self._cfg.language:
+            return
+        self._cfg.language = value
+        self._cfg.save(config.CONFIG_PATH)
+        # Язык процесса меняется только рестартом (монтаж — в main.py),
+        # живое переключение вне скоупа (бриф §5).
+        QMessageBox.information(self, self.tr("Язык"),
+                                self.tr("Язык применится после перезапуска"))
 
     # ---------- старт ----------
 
@@ -284,16 +328,17 @@ class MainWindow(QMainWindow):
 
     def _refresh_status(self) -> None:
         if self._last_result is None:
-            self._status_label.setText("Нет данных — нажмите «Индексировать»")
+            self._status_label.setText(self.tr("Нет данных — нажмите «Индексировать»"))
             return
         count = len(self._last_result.projects)
-        noun = plural_ru(count, "проект", "проекта", "проектов")
-        text = (
-            f"{count} {noun}, "
-            f"скан {_format_seconds(self._last_result.duration_ms)} с"
-        )
+        # lambda-обёртка обязательна: lupdate извлекает source-ключ только из
+        # синтаксического tr-вызова (аргументы tr_count для него невидимы).
+        # Инвариант Code-ревью: литерал в lambda синхронен one-аргументу.
+        noun = tr_count(lambda _s, _d, n: self.tr("проект", None, n), "проект", "проекта", "проектов", count)
+        text = self.tr("%1 %2, скан %3 с").replace("%1", str(count)).replace("%2", noun).replace(
+            "%3", _format_seconds(self._last_result.duration_ms))
         if self._last_result.root != self._cfg.root:
-            text += " — индекс построен для другого корня"
+            text += self.tr(" — индекс построен для другого корня")
         self._status_label.setText(text)
 
     def _update_errors_button(self) -> None:
@@ -301,8 +346,8 @@ class MainWindow(QMainWindow):
         if count == 0:
             self._errors_button.setVisible(False)
             return
-        noun = plural_ru(count, "ошибка", "ошибки", "ошибок")
-        self._errors_button.setText(f"{count} {noun}")
+        noun = tr_count(lambda _s, _d, n: self.tr("ошибка", None, n), "ошибка", "ошибки", "ошибок", count)
+        self._errors_button.setText(self.tr("%1 %2").replace("%1", str(count)).replace("%2", noun))
         self._errors_button.setVisible(True)
 
     # ---------- скан: lifecycle (архитектура п. 4.5) ----------
@@ -318,8 +363,9 @@ class MainWindow(QMainWindow):
         if not root.is_dir():
             QMessageBox.warning(
                 self,
-                "Индексировать",
-                "Корень сканирования не существует или не каталог:\n" + self._cfg.root,
+                self.tr("Индексировать"),
+                self.tr("Корень сканирования не существует или не каталог:\n%1").replace(
+                    "%1", self._cfg.root),
             )
             return
 
@@ -340,13 +386,18 @@ class MainWindow(QMainWindow):
 
         self._scan_thread = thread
         self._worker = worker
-        self._index_action.setText("Отмена")
-        self._status_label.setText("Просканировано 0, найдено 0…")
+        self._index_action.setText(self.tr("Отмена"))
+        self._status_label.setText(
+            self.tr("Просканировано %1, найдено %2…").replace("%1", "0").replace("%2", "0")
+        )
         thread.start()
 
     def _on_scan_progress(self, visited: int, found: int) -> None:
         # GUI-поток (queued-сигнал): только текст статусбара, без накопления строк.
-        self._status_label.setText(f"Просканировано {visited}, найдено {found}…")
+        self._status_label.setText(
+            self.tr("Просканировано %1, найдено %2…")
+            .replace("%1", str(visited)).replace("%2", str(found))
+        )
 
     def _on_scan_finished(self, result: ScanResult) -> None:
         # GUI-поток (queued-сигнал). Отменённый скан (cancelled=True, частичный
@@ -356,7 +407,8 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as exc:
             # ValueError — суррогатные пути из save_index (симметрично storage/config)
             QMessageBox.critical(
-                self, "Сохранение индекса", f"Не удалось сохранить индекс: {exc}"
+                self, self.tr("Сохранение индекса"),
+                self.tr("Не удалось сохранить индекс: %1").replace("%1", str(exc)),
             )
         self._last_result = result
         self._model.set_projects(result.projects)
@@ -366,15 +418,26 @@ class MainWindow(QMainWindow):
         self._update_errors_button()
         self._finish_scan_lifecycle()
 
-    def _on_scan_failed(self, message: str) -> None:
+    def _on_scan_failed(self, code: str, detail: str) -> None:
         # Старый индекс остаётся в таблице (архитектура п. 9); индекс НЕ сохраняем.
-        self._finish_scan_lifecycle()
-        QMessageBox.critical(self, "Ошибка индексации", message)
+        # Переводим КОД ошибки (строковый контракт scan_worker ↔ main_window:
+        # "root_missing" | "root_not_dir" | "oserror"), detail — недоверенный.
+        self._finish_scan_lifecycle()                 # порядок: lifecycle -> dialog -> refresh
+        if code == "root_missing":
+            QMessageBox.critical(self, self.tr("Ошибка индексации"),
+                                 self.tr("Корень сканирования не существует:\n%1").replace(
+                                     "%1", detail))
+        elif code == "root_not_dir":
+            QMessageBox.critical(self, self.tr("Ошибка индексации"),
+                                 self.tr("Корень сканирования не каталог:\n%1").replace(
+                                     "%1", detail))
+        else:                                         # "oserror": detail — техническая строка
+            QMessageBox.critical(self, self.tr("Ошибка индексации"), detail)
         self._refresh_status()
 
     def _finish_scan_lifecycle(self) -> None:
         """Обязательный порядок: quit() -> wait() -> deleteLater обоих."""
-        self._index_action.setText("Индексировать")
+        self._index_action.setText(self.tr("Индексировать"))
         thread, worker = self._scan_thread, self._worker
         self._scan_thread = None
         self._worker = None
@@ -390,7 +453,7 @@ class MainWindow(QMainWindow):
 
     def _on_browse_clicked(self) -> None:
         chosen = QFileDialog.getExistingDirectory(
-            self, "Выберите корень сканирования", self._cfg.root
+            self, self.tr("Выберите корень сканирования"), self._cfg.root
         )
         if not chosen:
             return
@@ -426,12 +489,12 @@ class MainWindow(QMainWindow):
         if not index.isValid():
             return
         menu = QMenu(self._table)
-        open_action = menu.addAction("Открыть в ZCode")
+        open_action = menu.addAction(self.tr("Открыть в ZCode"))
         if not zcode_app_exists():
             # Деградация, а не исчезновение (архитектура п. 9, Code-ревью NIT):
             # пункт остаётся видимым, но задизейблен с причиной.
             open_action.setEnabled(False)
-            open_action.setToolTip(NO_ZCODE_TIP)
+            open_action.setToolTip(NO_ZCODE_TIP())
         menu.setToolTipsVisible(True)
         if menu.exec(self._table.viewport().mapToGlobal(pos)) is open_action:
             entry = self._entry_at_proxy(index)
@@ -441,11 +504,33 @@ class MainWindow(QMainWindow):
     def _open_in_zcode(self, path: str) -> None:
         # ЕДИНСТВЕННОЕ место вызова zcode_opener.open_in_zcode (декомпозиция,
         # риск №2): панель, контекстное меню и двойной клик сходятся сюда.
+        # Переводим КОД ошибки (OpenResult.error_code: "not_absolute" |
+        # "dir_not_found" | "timeout" | "open_missing" | "open_failed");
+        # недоверенные строки (path, stderr) — только %1-подстановка.
         result = open_in_zcode(path)
         if not result.ok:
-            QMessageBox.warning(
-                self, "Открыть в ZCode", result.error_message or "не удалось открыть каталог"
-            )
+            if result.error_code == "not_absolute":
+                QMessageBox.warning(self, self.tr("Открыть в ZCode"),
+                                    self.tr("Ожидается абсолютный путь: %1").replace(
+                                        "%1", path))
+            elif result.error_code == "dir_not_found":
+                QMessageBox.warning(self, self.tr("Открыть в ZCode"),
+                                    self.tr("Каталог не найден: %1").replace("%1", path))
+            elif result.error_code == "timeout":
+                QMessageBox.warning(self, self.tr("Открыть в ZCode"),
+                                    self.tr("Превышено время ожидания (10 с)"))
+            elif result.error_code == "open_missing":
+                QMessageBox.warning(self, self.tr("Открыть в ZCode"),
+                                    self.tr("Утилита open не найдена"))
+            elif result.error_code == "open_failed":
+                QMessageBox.warning(self, self.tr("Открыть в ZCode"),
+                                    self.tr("Не удалось открыть: %1").replace(
+                                        "%1", result.error_message or ""))
+            elif result.error_message:
+                QMessageBox.warning(self, self.tr("Открыть в ZCode"), result.error_message)
+            else:
+                QMessageBox.warning(self, self.tr("Открыть в ZCode"),
+                                    self.tr("не удалось открыть каталог"))
 
     # ---------- ошибки скана ----------
 
@@ -453,7 +538,7 @@ class MainWindow(QMainWindow):
         if self._last_result is None:
             return
         dialog = QDialog(self)
-        dialog.setWindowTitle("Ошибки скана")
+        dialog.setWindowTitle(self.tr("Ошибки скана"))
         dialog.resize(640, 360)
         layout = QVBoxLayout(dialog)
         details = QPlainTextEdit(dialog)
@@ -462,7 +547,7 @@ class MainWindow(QMainWindow):
             "\n".join(
                 f"{error.path} — {error.reason}" for error in self._last_result.errors
             )
-            or "Нет ошибок"
+            or self.tr("Нет ошибок")
         )
         layout.addWidget(details)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=dialog)

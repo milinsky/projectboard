@@ -116,10 +116,12 @@ def test_notice_branches_have_html_none_strictly():
         assert result.notice is not None
 
 
-# --- Compliance: сигнатура дословно (архитектура п. 8, контракт с задачей 09) ---
+# --- Compliance: сигнатура дословно (архитектура п. 8, контракт с задачей 09);
+# --- truncation_label добавлен эпиком i18n (задача 03, MUST DO 3) ---
 def test_signature_and_default_max_chars():
     sig = inspect.signature(render_readme)
-    assert list(sig.parameters) == ["entry", "max_chars"]
+    assert list(sig.parameters) == ["entry", "max_chars", "truncation_label"]
+    assert sig.parameters["truncation_label"].default is None
     assert sig.parameters["max_chars"].default == 200_000
 
 

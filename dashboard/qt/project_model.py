@@ -11,14 +11,31 @@
 import html
 from datetime import datetime
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QCoreApplication,
+    QModelIndex,
+    QSortFilterProxyModel,
+    Qt,
+)
 
 from dashboard.models import ProjectEntry
+from dashboard.qt import i18n
 
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
-COLUMNS = ["Имя", "Группа", "Путь (rel)", "Изменён", "Размер"]
 
-_SIZE_UNITS = ("Б", "КиБ", "МиБ", "ГиБ", "ТиБ")
+
+def _size_units() -> tuple[str, ...]:
+    """Единицы размера, лениво в точке вызова (format_size): translate при
+    импорте модуля вычисляется до QApplication и трансляторов, поэтому
+    переводимые строки живут только внутри функций (правило ленивости tr)."""
+    return (
+        QCoreApplication.translate("ProjectTableModel", "Б"),
+        QCoreApplication.translate("ProjectTableModel", "КиБ"),
+        QCoreApplication.translate("ProjectTableModel", "МиБ"),
+        QCoreApplication.translate("ProjectTableModel", "ГиБ"),
+        QCoreApplication.translate("ProjectTableModel", "ТиБ"),
+    )
 
 
 def plural_ru(count: int, one: str, few: str, many: str) -> str:
@@ -37,15 +54,37 @@ def plural_ru(count: int, one: str, few: str, many: str) -> str:
     return many
 
 
+def tr_count(translate, one: str, few: str, many: str, n: int) -> str:
+    """Форма существительного по числу n, БЕЗ самого числа — его добавляет
+    вызывающий («2 projects» = f"{n} {form}"; симметрично ru-ветке plural_ru).
+    Без активного перевода (active_language None/'ru') — русское правило
+    plural_ru (source-язык, контракты приёмочных тестов); с переводом en/zh —
+    форма по правилам локали из app_<lang>.qm (source-ключ = one; numerus-формы
+    в .ts без %n — вердикт Техлида, задача 06 эпика i18n).
+    Call sites обязаны передавать translate через lambda-обёртку с прямым
+    self.tr(<литерал>, None, n): lupdate извлекает source-ключ только из
+    синтаксического tr-вызова (аргументы хелпера для него невидимы); литерал
+    в lambda синхронен one-аргументу (инвариант Code-ревью задачи 06)."""
+    if i18n.active_language() in (None, "ru"):
+        return plural_ru(n, one, few, many)
+    return translate(one, None, n)
+
+
 def format_size(num_bytes: int) -> str:
-    """Человекочитаемый размер: 512 -> "512 Б", 3*1024*1024 -> "3.0 МиБ"."""
+    """Человекочитаемый размер: 512 -> "512 Б", 3*1024*1024 -> "3.0 МиБ".
+
+    Байтовая ветка определяется ПОЗИЦИЕЙ (units[0]), не литералом «Б»:
+    при активном переводе единицы переводятся («B»/…), и сравнение с
+    source-литералом сломало бы целочисленный формат (точка внимания
+    из отчёта задачи 03 эпика i18n). Без транслятора поведение то же.
+    """
     size = float(num_bytes)
-    unit = _SIZE_UNITS[0]
-    for unit in _SIZE_UNITS:
-        if size < 1024 or unit == _SIZE_UNITS[-1]:
+    units = _size_units()
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
             break
         size /= 1024
-    if unit == "Б":
+    if unit == units[0]:
         return f"{int(size)} {unit}"
     return f"{size:.1f} {unit}"
 
@@ -84,11 +123,19 @@ class ProjectTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._projects)
 
     def columnCount(self, parent=QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(COLUMNS)
+        return 0 if parent.isValid() else 5
 
     def headerData(self, section: int, orientation, role=Qt.ItemDataRole.DisplayRole):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return COLUMNS[section]
+            if section == 0:
+                return self.tr("Имя")
+            if section == 1:
+                return self.tr("Группа")
+            if section == 2:
+                return self.tr("Путь (rel)")
+            if section == 3:
+                return self.tr("Изменён")
+            return self.tr("Размер")
         return None
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
@@ -110,11 +157,11 @@ class ProjectTableModel(QAbstractTableModel):
             # QToolTip рендерит строки, похожие на HTML, как rich text: экранируем
             # недоверенные данные и принудительно задаём rich text, чтобы escape
             # гарантированно отобразился как текст (Security-ревью, INFO).
-            text = html.escape(
-                f"{entry.path}\n{entry.file_count} "
-                f"{plural_ru(entry.file_count, 'файл', 'файла', 'файлов')}"
-            )
-            return f"<span style='white-space:pre'>{text}</span>"
+            # Порядок сохранён: escape — только к недоверенному пути, ДО склейки;
+            # склонение лениво через tr_count (перевод получен до склейки).
+            esc_path = html.escape(entry.path)
+            noun = tr_count(lambda _s, _d, n: self.tr("файл", None, n), "файл", "файла", "файлов", entry.file_count)
+            return f"<span style='white-space:pre'>{esc_path}\n{entry.file_count} {noun}</span>"
         return None
 
     @staticmethod

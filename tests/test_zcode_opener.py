@@ -153,3 +153,57 @@ def test_no_shell_in_source():
     source = ZCODE_OPENER_SOURCE.read_text(encoding="utf-8")
     assert "shell=True" not in source
     assert "shell = True" not in source
+
+
+# --- error_code в OpenResult (эпик i18n, задача 04): код для перевода в MainWindow ---
+
+def test_success_error_code_is_none(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", fake_run(returncode=0))
+    result = open_in_zcode(str(tmp_path))
+    assert result.ok is True
+    assert result.error_code is None
+
+
+def test_relative_path_error_code_not_absolute(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", Mock())
+    result = open_in_zcode("relative/dir")
+    assert result.ok is False
+    assert result.error_code == "not_absolute"
+
+
+def test_missing_dir_error_code_dir_not_found(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", Mock())
+    result = open_in_zcode("/tmp/definitely-missing-dir-xyz")
+    assert result.ok is False
+    assert result.error_code == "dir_not_found"
+
+
+def test_timeout_error_code_timeout(monkeypatch, tmp_path):
+    def raise_timeout(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=10)
+
+    monkeypatch.setattr(subprocess, "run", raise_timeout)
+    result = open_in_zcode(str(tmp_path))
+    assert result.ok is False
+    assert result.error_code == "timeout"
+
+
+def test_open_utility_missing_error_code_open_missing(monkeypatch, tmp_path):
+    def raise_not_found(cmd, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "open")
+
+    monkeypatch.setattr(subprocess, "run", raise_not_found)
+    result = open_in_zcode(str(tmp_path))
+    assert result.ok is False
+    assert result.error_code == "open_missing"
+
+
+def test_nonzero_error_code_open_failed(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="",
+            stderr="unable to find application named 'ZCode'"))
+    result = open_in_zcode(str(tmp_path))
+    assert result.ok is False
+    assert result.error_code == "open_failed"

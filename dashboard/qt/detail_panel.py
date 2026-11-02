@@ -17,7 +17,7 @@
   зовёт MainWindow после каждого нового скана.
 """
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QCoreApplication, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -35,11 +35,16 @@ from dashboard.models import ProjectEntry
 from dashboard.qt.project_model import format_datetime, format_size
 from dashboard.zcode_opener import zcode_app_exists
 
-_PLACEHOLDER = "Нажмите „Индексировать“"
-NO_ZCODE_TIP = "ZCode.app не найден"  # публичное имя: импортируется в main_window
-_TRUNCATED_TEXT = "README усечён"
 _ALLOWED_SCHEMES = ("http", "https")
-_REJECT_TITLE = "Ссылка не открывается"
+
+
+def NO_ZCODE_TIP() -> str:
+    """Тултип деградации без ZCode.app; публичное имя сохранено (main_window).
+
+    Функция, а не константа: переводимые строки вычисляются лениво в точке
+    вызова — при импорте модуля трансляторов ещё нет (правило ленивости tr).
+    """
+    return QCoreApplication.translate("DetailPanel", "ZCode.app не найден")
 
 
 def _format_mtime(mtime: float) -> str:
@@ -72,15 +77,15 @@ class DetailPanel(QWidget):
         self._path_label = QLabel()
         self._path_label.setTextFormat(Qt.TextFormat.PlainText)
         self._path_label.setWordWrap(True)
-        self._copy_button = QPushButton("Скопировать путь")
+        self._copy_button = QPushButton(self.tr("Скопировать путь"))
         self._copy_button.clicked.connect(self._copy_path)
 
         self._mtime_label = QLabel()
         self._size_label = QLabel()
-        self._truncated_label = QLabel(_TRUNCATED_TEXT)
+        self._truncated_label = QLabel(self.tr("README усечён"))
         self._truncated_label.setVisible(False)
 
-        self._open_button = QPushButton("Открыть в ZCode")
+        self._open_button = QPushButton(self.tr("Открыть в ZCode"))
         self._open_button.clicked.connect(self._emit_open_requested)
 
         self._browser = QTextBrowser()
@@ -115,23 +120,29 @@ class DetailPanel(QWidget):
             self._size_label.setText("")
             self._truncated_label.setVisible(False)
             self._copy_button.setEnabled(False)
-            self._browser.setPlainText(_PLACEHOLDER)
+            self._browser.setPlainText(self.tr("Нажмите „Индексировать“"))
         else:
             self._name_label.setText(entry.name)
             self._path_label.setText(entry.path)
-            self._mtime_label.setText(f"Изменён: {_format_mtime(entry.mtime)}")
-            self._size_label.setText(f"Размер: {format_size(entry.dir_size_bytes)}")
+            self._mtime_label.setText(self.tr("Изменён: %1").replace("%1", _format_mtime(entry.mtime)))
+            self._size_label.setText(self.tr("Размер: %1").replace("%1", format_size(entry.dir_size_bytes)))
             self._truncated_label.setVisible(entry.readme_truncated)
             self._copy_button.setEnabled(True)
-            if entry.readme_error or entry.readme_content == "":
-                # notice-ветка render_readme (html=None): сообщение вместо рендера
-                rendered = mdrender.render_readme(entry, self._max_chars)
-                self._browser.setPlainText(rendered.notice or "")
+            if entry.readme_error:
+                # notice-ветка — по признакам entry, порядок ветвления совпадает
+                # с render_readme (ошибка -> пустота -> рендер); причина ошибки —
+                # недоверенные персист-данные: подстановка в точке показа,
+                # не в source-литерале
+                self._browser.setPlainText(
+                    self.tr("README нечитаем: %1").replace("%1", entry.readme_error))
+            elif entry.readme_content == "":
+                self._browser.setPlainText(self.tr("README пуст"))
             else:
                 # кэш до вызова render_readme: попадание не перерендеривает markdown
                 html = self._cache.get(entry.rel_path)
                 if html is None:
-                    rendered = mdrender.render_readme(entry, self._max_chars)
+                    rendered = mdrender.render_readme(entry, self._max_chars,
+                                                      truncation_label=self.tr("README усечён для отображения"))
                     html = rendered.html or ""
                     self._cache[entry.rel_path] = html
                 self._browser.setHtml(html)
@@ -150,7 +161,7 @@ class DetailPanel(QWidget):
             return
         exists = zcode_app_exists()
         self._open_button.setEnabled(exists)
-        self._open_button.setToolTip("" if exists else NO_ZCODE_TIP)
+        self._open_button.setToolTip("" if exists else NO_ZCODE_TIP())
 
     def _copy_path(self) -> None:
         if self._entry is not None:
@@ -168,14 +179,17 @@ class DetailPanel(QWidget):
         if scheme not in _ALLOWED_SCHEMES:
             QMessageBox.information(
                 self,
-                _REJECT_TITLE,
-                f"Локальные и нестандартные ссылки не открываются: {url.toString()}",
+                self.tr("Ссылка не открывается"),
+                # url — недоверенная строка из README: подстановка в точке
+                # показа, не в source-литерале
+                self.tr("Локальные и нестандартные ссылки не открываются: %1").replace(
+                    "%1", url.toString()),
             )
             return
         answer = QMessageBox.question(
             self,
-            "Открыть ссылку",
-            f"Открыть ссылку в браузере?\n{url.toString()}",
+            self.tr("Открыть ссылку"),
+            self.tr("Открыть ссылку в браузере?\n%1").replace("%1", url.toString()),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

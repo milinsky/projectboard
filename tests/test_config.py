@@ -98,6 +98,35 @@ def test_unknown_keys_ignored(tmp_path):
     assert cfg.max_depth == 8
 
 
+# --- Поле language (эпик i18n): allowlist "system"|"ru"|"en"|"zh_CN" ---
+
+@pytest.mark.parametrize("language", ["system", "ru", "en", "zh_CN"])
+def test_valid_language_values_loaded(tmp_path, language):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"language": language}), encoding="utf-8")
+    assert load_config(p).language == language
+
+
+@pytest.mark.parametrize("bad", ["fr", 42, None, ["ru"]])
+def test_invalid_language_values_replaced_with_default(tmp_path, bad):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"language": bad}), encoding="utf-8")
+    assert load_config(p).language == "system"
+
+
+def test_missing_language_key_reads_as_default(tmp_path):
+    # старые конфиги без ключа language читаются с дефолтом
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"root": "/x"}), encoding="utf-8")
+    assert load_config(p).language == "system"
+
+
+def test_roundtrip_language(tmp_path):
+    p = tmp_path / "config.json"
+    AppConfig(language="en").save(p)
+    assert load_config(p).language == "en"
+
+
 # --- Roundtrip save -> load без потерь ---
 
 def test_roundtrip_lossless_including_extra_ignore_names(tmp_path):
@@ -127,9 +156,13 @@ def test_saved_json_shape_and_encoding(tmp_path):
     p = tmp_path / "config.json"
     AppConfig(root="/Users/milinsky/Проекты").save(p)
     data = json.loads(p.read_text(encoding="utf-8"))
+    # "language" — язык интерфейса (эпик i18n): единственная правка существующего
+    # теста эпика, арифметическое следствие брифа §4.2 — поле обязательно в
+    # save-форме; см. архитектура i18n п. 9.
     assert set(data) == {
         "root", "max_depth", "extra_ignore_names",
         "max_readme_store_bytes", "max_readme_render_chars",
+        "language",
     }
     raw = p.read_text(encoding="utf-8")
     assert "/Users/milinsky/Проекты" in raw  # ensure_ascii=False

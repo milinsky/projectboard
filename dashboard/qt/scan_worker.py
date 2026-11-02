@@ -18,7 +18,7 @@ from dashboard.scanner import ScanOptions, scan_root
 class ScanWorker(QObject):
     progress = Signal(int, int)   # visited, found
     finished = Signal(object)     # ScanResult
-    failed = Signal(str)          # фатальная ошибка (root не существует и т.п.)
+    failed = Signal(str, str)     # (code, detail): коды "root_missing"|"root_not_dir"|"oserror"
 
     def __init__(self, options: ScanOptions, parent=None):
         super().__init__(parent)
@@ -30,10 +30,12 @@ class ScanWorker(QObject):
         try:
             result = scan_root(self._options, cancel=self._cancel,
                                progress=self._on_progress)
-        except (FileNotFoundError, NotADirectoryError) as e:
-            self.failed.emit(str(e))
+        except FileNotFoundError:
+            self.failed.emit("root_missing", str(self._options.root))
+        except NotADirectoryError:
+            self.failed.emit("root_not_dir", str(self._options.root))
         except OSError as e:            # прочие фатальные — тоже failed, не краш потока
-            self.failed.emit(str(e))
+            self.failed.emit("oserror", str(e))
         else:
             self.finished.emit(result)
 

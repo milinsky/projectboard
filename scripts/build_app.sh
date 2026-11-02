@@ -39,6 +39,14 @@ if [ ! -f "$ROOT/main.py" ]; then
   echo "Ошибка: не найден \"$ROOT/main.py\"." >&2
   exit 1
 fi
+if [ ! -f "$ROOT/translations/app_en.qm" ]; then
+  echo "Ошибка: не найден \"$ROOT/translations/app_en.qm\" — переводы не собраны (scripts/update_translations.sh)." >&2
+  exit 1
+fi
+if [ ! -f "$ROOT/translations/app_zh_CN.qm" ]; then
+  echo "Ошибка: не найден \"$ROOT/translations/app_zh_CN.qm\" — переводы не собраны (scripts/update_translations.sh)." >&2
+  exit 1
+fi
 
 # 4: staging вне репозитория, удаляется при любом исходе (EXIT).
 STAGING="$(mktemp -d)"
@@ -101,6 +109,7 @@ cat > "$STAGING/Projectboard.app/Contents/Info.plist" <<EOF
 	<key>NSHighResolutionCapable</key><true/>
 	<key>LSMinimumSystemVersion</key><string>12.0</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+	<key>CFBundleAllowMixedLocalizations</key><true/>
 </dict>
 </plist>
 EOF

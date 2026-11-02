@@ -33,6 +33,7 @@ class AppConfig:
     extra_ignore_names: list[str] = field(default_factory=list)
     max_readme_store_bytes: int = 512 * 1024
     max_readme_render_chars: int = 200_000
+    language: str = "system"          # "system" | "ru" | "en" | "zh_CN" (эпик i18n)
 
     def save(self, path: Path = CONFIG_PATH) -> None:
         """Атомарная запись: temp-файл в каталоге path, затем os.replace."""
@@ -85,4 +86,7 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
         cfg.max_readme_store_bytes = data["max_readme_store_bytes"]
     if _is_int(data.get("max_readme_render_chars")) and data["max_readme_render_chars"] >= 1:
         cfg.max_readme_render_chars = data["max_readme_render_chars"]
+    value = data.get("language")
+    if isinstance(value, str) and value in ("system", "ru", "en", "zh_CN"):
+        cfg.language = value
     return cfg
