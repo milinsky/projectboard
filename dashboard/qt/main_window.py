@@ -156,7 +156,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Проекты")
+        self.setWindowTitle("Projectboard")
         self.resize(1100, 700)
 
         # Старт: только конфиг + JSON-кэш. Никакого скана и записи на диск.
