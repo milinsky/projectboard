@@ -106,7 +106,7 @@ def test_argv_injection_style_path_refused(monkeypatch):
 
 
 def test_special_chars_path_is_single_argument(monkeypatch):
-    """Инъекция невозможна по построению: путь с пробелами/$ — ровно один элемент списка."""
+    """Инъекция невозможна по построению: путь с пробелами/$ кодируется в URL."""
     monkeypatch.setattr(Path, "is_dir", lambda self: True)  # спецкаталог не создаём на диске
     mock_run = Mock(return_value=subprocess.CompletedProcess(
         args=[], returncode=0, stdout="", stderr=""))
@@ -114,9 +114,27 @@ def test_special_chars_path_is_single_argument(monkeypatch):
     result = open_in_zcode(SPECIAL_PATH)
     assert result.ok is True
     cmd = mock_run.call_args[0][0]
-    assert cmd == ["open", "-a", "ZCode", SPECIAL_PATH]
-    assert len(cmd) == 4
-    assert cmd[-1] == SPECIAL_PATH
+    # команда: open "zcode://workspace/open?path=<quote(safe='')>" — ровно 2 элемента
+    assert len(cmd) == 2
+    assert cmd[0] == "open"
+    assert cmd[1].startswith("zcode://workspace/open?path=")
+    # спецсимволы пути закодированы percent-encoding, сырых пробелов/$ в URL нет
+    assert " " not in cmd[1] and "$" not in cmd[1]
+
+
+def test_url_scheme_format(monkeypatch):
+    """Доработка 2026-11-02: открытие через URL-схему ZCode (формат из app.asar),
+    encodeURIComponent-эквивалент: всё закодировано, включая '/'."""
+    monkeypatch.setattr(Path, "is_dir", lambda self: True)
+    mock_run = Mock(return_value=subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    from urllib.parse import quote
+    result = open_in_zcode("/Users/milinsky/Projects/Jine")
+    assert result.ok is True
+    cmd = mock_run.call_args[0][0]
+    assert cmd == ["open", f"zcode://workspace/open?path={quote('/Users/milinsky/Projects/Jine', safe='')}"]
+    assert "%2FUsers%2Fmilinsky%2FProjects%2FJine" in cmd[1]
 
 
 @pytest.mark.skipif(not Path("/Applications/ZCode.app").exists(),

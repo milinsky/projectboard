@@ -1,15 +1,20 @@
 # dashboard/zcode_opener.py — stdlib only, без Qt
-"""Запуск ZCode.app: open_in_zcode(path) через `open -a ZCode <path>` + zcode_app_exists().
+"""Запуск ZCode.app: open_in_zcode(path) через URL-схему `zcode://workspace/open`
++ zcode_app_exists().
 
+Механизм (доработка 2026-11-02): `open -a ZCode <path>` ZCode игнорирует
+(Electron-приложение не обрабатывает файловые аргументы — кнопка «ничего не
+делала»). Рабочий формат найден в app.asar самого ZCode и подтверждён
+пользователем визуально: `zcode://workspace/open?path=${encodeURIComponent(path)}`.
 Команда фиксирована и передаётся списком аргументов без shell-интерпретатора
-(инъекция через имена каталогов невозможна, архитектура п. 10); любые неудачи
-(отказ/timeout/ненулевой код open) возвращаются как OpenResult(ok=False), не
-исключения — решение о показе сообщения принимает MainWindow (единственный
-вызывающий, задача 10).
+(инъекция невозможна, архитектура п. 10); любые неудачи (отказ/timeout/ненулевой
+код open) возвращаются как OpenResult(ok=False), не исключения — решение о
+показе сообщения принимает MainWindow (единственный вызывающий, задача 10).
 """
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 
 @dataclass
@@ -30,8 +35,11 @@ def open_in_zcode(project_path: str) -> OpenResult:
         return OpenResult(False, f"ожидается абсолютный путь: {project_path}")
     if not p.is_dir():
         return OpenResult(False, f"каталог не найден: {project_path}")
+    # encodeURIComponent-эквивалент: кодируем всё, включая "/" (проверено:
+    # zcode://workspace/open?path=%2FUsers%2F... открывает проект)
+    url = f"zcode://workspace/open?path={quote(project_path, safe='')}"
     try:
-        proc = subprocess.run(["open", "-a", "ZCode", project_path],
+        proc = subprocess.run(["open", url],
                               capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
         return OpenResult(False, "превышено время ожидания (10 с)")
